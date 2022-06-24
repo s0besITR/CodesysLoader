@@ -334,11 +334,11 @@ def getLibType(type_id, c_type_id):
 		'c_se_tb_1_fb' : [62],
 		'c_se_tc_1_fb' : [63],		
 	
-		'bo_tb_fb' : [3, 5, 7, 31, 32, 33],
-		'ep_td_fb' : [38],
-		'it_tb_fb' : [15, 37],
-		'me_tf_fb' : [9, 11, 13, 21, 34, 35, 36],
-		'sp_tb_fb' : [1, 30]
+		'm_bo_tb_1_fb' : [3, 5, 7, 31, 32, 33],
+		'm_ep_td_1_fb' : [38],
+		'm_it_tb_1_fb' : [15, 37],
+		'm_me_tf_1_fb' : [9, 11, 13, 21, 34, 35, 36],
+		'm_sp_tb_1_fb' : [1, 30]
 	}
 	# Принадлежность библиотечному типу к идентификатору из CustomTypeId
 	custom_type_ids = {
@@ -537,10 +537,10 @@ def getGVLdata(channels):
 	gvl_text = "VAR_GLOBAL" + '\n' + '\t//Updated: ' + datetime.now().strftime('%d.%m.%Y %H:%M:%S') + '\n'
 	if(channels['data']):
 		for ch in channels['data']:		
-			gvl_text += '\t// ' + ch.get('Descr')[1:] + '\n\t' + ch.get('MapVarName') + ': IEC_LIB.' + ch.get('lib_type') + ';\n'
+			gvl_text += '\t// ' + ch.get('Descr')[1:] + '\n\t' + ch.get('MapVarName') + ': PsIEC60870Bridge.' + ch.get('lib_type') + ';\n'
 	if(channels['cmd']):	
 		for ch in channels['cmd']:
-			gvl_text += '\t// ' + ch.get('Descr')[1:] + '\n\t' + ch.get('MapVarName') + ': IEC_LIB.' + ch.get('lib_type') + ';\n'
+			gvl_text += '\t// ' + ch.get('Descr')[1:] + '\n\t' + ch.get('MapVarName') + ': PsIEC60870Bridge.' + ch.get('lib_type') + ';\n'
 	gvl_text+= 'END_VAR'
 	return gvl_text
 
