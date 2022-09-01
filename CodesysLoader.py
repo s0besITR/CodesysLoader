@@ -672,8 +672,9 @@ def prettify_imitation_prg():
 				obj_key = getLineImitObj(line_text)			
 				if not obj_key in obj_keys:
 					obj_keys.append(obj_key)
-					obj_dict[obj_key] = []							
-				obj_dict[obj_key].append(line_text)
+					obj_dict[obj_key] = []
+				if not " резерв" in line_text.lower(): 			
+					obj_dict[obj_key].append(line_text)	
 			else:
 				imit_text += '\n' + line_text
 					
