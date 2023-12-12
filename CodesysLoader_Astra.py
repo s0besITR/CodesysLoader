@@ -198,49 +198,109 @@ def compileActivePrj():
 
 def modifyActiveProject(files):
 	"""
-	Обновляет активный проект. Загружает Application, обновляет Slave104Drivers
+	Обновляет активный проект. Загружает Application, обновляет Slave104Drivers, ModbusSlaveDriver
 	"""
 	#Списки каналов
 	global start_time
-	d_keys = ['data', 'cmd']
-	slave_ST = dict.fromkeys(d_keys)
-	slave_EDC = dict.fromkeys(d_keys)
+	
+	slave_ST = {}
+	slave_EDC = {}
+	slave_Modbus = dict.fromkeys(['data']);
 	
 	if start_time == 0:
 		start_time = datetime.now()
+			
 	
 	if files != None:
 		for file in files:
 			if file.endswith('Application.xml'):
 				import_application(file)
-			elif file.endswith('EDC_CMD.iec104cmd.xml'):
-				slave_EDC['cmd'] = load_channels(file)
-			elif file.endswith('EDC_DATA.iec104data.xml'):
-				slave_EDC['data'] = load_channels(file)
-			elif file.endswith('ST_CMD.iec104cmd.xml'):
-				slave_ST['cmd'] = load_channels(file)
-			elif file.endswith('ST_DATA.iec104data.xml'):
-				slave_ST['data'] = load_channels(file) 
-			else:
+			elif 'REGUL_IEC104_' in file:
+				key_str = ''
+				filename = file[file.rfind('\\') + 1:]
+				if filename.endswith('iec104cmd.xml'):
+					key_str = 'cmd'
+				if filename.endswith('iec104data.xml'):
+					key_str = 'data'				
+				if '_EDC_' in filename:
+					slave_EDC[key_str + filename.replace('REGUL_IEC104_', '').replace('_CMD.iec104cmd.xml','').replace('_DATA.iec104data.xml','').replace('ST','').replace('EDC','')] = load_channels(file)
+				if '_ST_' in filename:
+					slave_ST[key_str + filename.replace('REGUL_IEC104_', '').replace('_CMD.iec104cmd.xml','').replace('_DATA.iec104data.xml','').replace('ST','').replace('EDC','')] = load_channels(file)
+			elif file.endswith('mb_direct_channels.xml'):
+				slave_Modbus['data'] = load_channels_modbus(file) 
+			elif not (file.endswith('modules') or file.endswith('modules_tcp') ):				
 				write_msg(Severity.Error, 'Неизвестный формат файла:   ' + file)
 	else:
 		write_msg(Severity.Text, 'Выполнение скрипта отменено')
 		return False
 	
-	if slave_ST.get('data')!= None or slave_ST.get('cmd')!= None:
-		iec104slave_mod('Slave_104_Driver', slave_ST)
-		iec104_GVL('I104_GVL_TM', slave_ST)
+	if slave_ST:
+		clearOld_GVL('I104_GVL_TM')
+		for i in range(1,150):
+			index = str(i)
+			new_dict = {}
+			module_name = ''
+			gvl_name = ''
+			if index == '1':
+				for key in ['data', 'cmd']:
+					if key in slave_ST:
+						new_dict[key] = slave_ST[key]
+				
+				module_name = 'Slave_104_Driver'
+				gvl_name = 'I104_GVL_TM'
+			else:
+				for key in ['data_' + index, 'cmd_' + index]:
+					if key in slave_ST:
+						new_dict[key.replace('_' + index,'')] = slave_ST[key]
+				module_name = 'Slave_104_Driver_' + index
+				gvl_name = 'I104_GVL_TM_' + index
+			if new_dict:
+				iec104slave_mod(module_name, new_dict)				
+				iec104_GVL(gvl_name, new_dict)	
+			else:
+				break
 		write_msg(Severity.Text, '----------Импорт каналов ТМ закончен----------')
-	if slave_EDC.get('data')!= None or slave_EDC.get('cmd')!= None:
-		iec104slave_mod('Slave_104_Driver_EDC', slave_EDC)
-		iec104_GVL('I104_GVL_KK', slave_EDC)
+		
+	if slave_EDC:
+		clearOld_GVL('I104_GVL_KK')
+		for i in range(1,150):
+			index = str(i)
+			new_dict = {}
+			module_name = ''
+			gvl_name = ''
+			if index == '1':
+				for key in ['data', 'cmd']:
+					if key in slave_EDC:
+						new_dict[key] = slave_EDC[key]
+				
+				module_name = 'Slave_104_Driver_EDC'
+				gvl_name = 'I104_GVL_KK'
+			else:
+				for key in ['data_' + index, 'cmd_' + index]:
+					if key in slave_EDC:
+						new_dict[key.replace('_' + index,'')] = slave_EDC[key]
+				module_name = 'Slave_104_Driver_EDC_' + index
+				gvl_name = 'I104_GVL_KK_' + index
+			if new_dict:
+				iec104slave_mod(module_name, new_dict)				
+				iec104_GVL(gvl_name, new_dict)	
+			else:
+				break
 		write_msg(Severity.Text, '----------Импорт каналов EDC закончен----------')
+		
+		
+	if slave_Modbus.get('data')!= None:
+		modbus_slave_mod('Modbus_Tcp_Slave', slave_Modbus)		
+		write_msg(Severity.Text, '----------Импорт каналов ModbusTCPSlave закончен----------')
+		
 	dir = files[0].split('\\')
 	dir.pop(-1)
 	replaceModbusDevices('\\'.join(dir))
+	commentTriggers()
 	# очистка памяти
-	del slave_ST
-	del slave_EDC
+	#del slave_ST
+	#del slave_EDC
+	del slave_Modbus
 	gc.collect()
 	return True	
 
@@ -248,21 +308,31 @@ def modifyManyProjects(folder):
 	"""
 	Обновляет все проекты скопом по очереди
 	"""
-	err_count = 0
+	err_count = 0	
 	for uso_folder in os.listdir(folder):	
 		dir = folder + '\\' + uso_folder
 		xml_list = []										# список .xml для импорта
 		if os.path.isdir(dir):
 			file_list =  os.listdir(dir)			
 			for file in file_list:
-				if file.endswith('.xml'):
-					xml_list.append(dir + '\\' + file)
+				if (file.endswith('.xml') or file == "modules" or file == "modules_tcp"):
+					xml_list.append(dir + '\\' + file)				
 		if len(xml_list):
 			if(set_primary_prj(uso_folder)):			
 				modifyActiveProject(xml_list)			
 				err_count += compileActivePrj()
 				write_msg(Severity.Information, 'Работа с текущим устройством завершена')			
 	return err_count
+
+### Импорт XML	
+def import_xml(xml_name):
+	"""
+		Импорт XML файла в проект
+	"""
+	app = getActiveApplication()
+	
+	if not app is None :
+		app.import_xml(Reporter(), xml_name, True)	
 	
 	### Импорт Application	
 def import_application(xml_name):
@@ -274,10 +344,126 @@ def import_application(xml_name):
 	if not app is None :
 		app.import_xml(Reporter(), xml_name)
 		prettify_imitation_prg()
-		write_msg(Severity.Text, '----------Импорт Application закончен----------')		
+		write_msg(Severity.Text, '----------Импорт Application закончен----------')
 	else:
 		write_msg(Severity.Error, '----------Импорт application не состоялся----------')
 
+### Модификация Драйвера Modbus TCP Slave
+def load_channels_modbus(xml_name):
+	""" 
+		Парсим xml файл, и возвращает список словарей, в которых хранятся атрибуты канала
+	"""	
+	# Складируем информацию из xml в список объектов
+	tmp_list = []	
+	tree = ET.parse(xml_name)
+	root = tree.getroot()
+	for elem in root:		
+		tmp_list.append(
+					{
+						"Name" 			: elem.attrib.get('Name'),
+						"Descr" 		: elem.attrib.get('Descr'),
+						"Type" 			: elem.attrib.get('Type'),
+						"Offset" 		: elem.attrib.get('Offset'),
+						"Length" 		: elem.attrib.get('Length'),
+						"VarName" 		: elem.attrib.get('VarName')
+					}		
+				)				
+	return tmp_list
+	
+def modbus_slave_mod(driver_name, channels):
+	"""
+	Экспортируем из Codesys Modbus Tcp Slave с именем driver_name, затем копируем его построчно в новый файл.
+	Когда нашли каналы в старом файле, пропускаем их, вместо них копируем новые каналы, сохраняем файл с припиской _mod
+	"""
+	# Экспорт файла
+	obj = getActiveDevice().find(driver_name, True)
+	file_name = getPrjPath() + "\\" + driver_name + ".xml"
+	file_name_mod = file_name.replace('.xml', '_mod.xml')
+	if len(obj) > 0 :
+		obj[0].export_xml(Reporter(), file_name)		
+		obj[0].remove()
+		write_msg(Severity.Text, 'Удалено:   {driver}'.format(driver = driver_name))
+	else:
+		write_msg(Severity.Error, '{driver} не найден!'.format(driver = driver_name))
+		return 
+	
+	# Модификация файла
+	channels_found = False
+	with open(file_name, 'rb') as src, open(file_name_mod, 'wb') as dest:
+		for line in src:
+			if line.find('localTypes:Channel') != -1 and channels_found == False:
+				channels_found = True
+			if line.find('</HostParameterSet>')!= -1:
+				writeModbusChannelsToFile(dest, channels)
+				channels_found = False
+			if channels_found == False:
+				dest.write(line)
+		
+	dev = getActiveDevice()
+	if (dev != None):
+		dev.import_xml(Reporter(), file_name_mod)
+		os.remove(file_name)
+		os.remove(file_name_mod)
+	else:
+		write_msg(Severity.Error, 'Устройство Device не найдено!')	
+
+def writeModbusChannelsToFile(file, channels):
+	"""
+	Записывает в файл Modbus TCP Slave все ранее сохраненные каналы
+	"""	
+	param_id = 20000								# id данных начинается с 20000	
+	if(channels['data']):
+		for ch in channels['data']:	
+			file.write(getModbusNodeStr(ch, str(param_id)))
+			param_id += 1	
+
+def getModbusType(type_str):
+	"""
+	Получить тип канала в виде числа
+	"""	
+	type_ids = {		
+		'4' :'HoldingRegisters',
+		'1' :'DiscreteInputs',
+		'3' : 'InputRegisters',
+		'2' : 'Coils'		
+	}
+	
+	for key in type_ids.keys():
+		if type_str == type_ids[key]:
+			return key
+	return 'None'
+	
+def getModbusNodeStr(channel, param_id):
+	"""
+	Возвращаем xml представление одного modbus канала с данными
+	"""	
+	f_str = """<Parameter ParameterId="{paramId}" type="localTypes:Channel">
+		<Attributes />
+		<Value name="{valName}" visiblename="{valVisName}" desc="{valDesc}">
+			<Element name="ChType" visiblename="Тип канала">{valType}</Element>
+			<Element name="Offset" visiblename="Смещение">{valOffset}</Element>
+			<Element name="Length" visiblename="Длина">{valLength}</Element>
+			<Element name="VarName" visiblename="Имя переменной">'{var_name}'</Element>
+			<Element name="ChannelName" visiblename="Имя">'{valVisName}'</Element>
+			<Element name="ChannelComment" visiblename="Комментарий">'{valDesc}'</Element>
+		</Value>
+		<Name>{valVisName}</Name>
+		<Description>{valDesc}</Description>
+	</Parameter>"""
+	
+	
+	node_str = f_str.format(
+		paramId 		= param_id,
+		valName 		= '_x003' + param_id[0] + '_' + param_id[1:],
+		valVisName 		= channel.get('Name'),
+		valDesc 		= channel.get('Descr'),
+		valType 		= getModbusType(channel.get('Type')),
+		valOffset		= channel.get('Offset'),
+		valLength		= channel.get('Length'),
+		var_name 		= channel.get('VarName')		
+		)
+	return node_str.encode('utf-8')
+		
 	### Модификация Драйвера Slave 104		
 def load_channels(xml_name):
 	""" 
@@ -312,7 +498,7 @@ def load_channels(xml_name):
 					}		
 				)				
 	return tmp_list
-
+	
 def getLibType(type_id, c_type_id):
 	"""
 	По идентификатору параметра получаем библиотечный тип
@@ -497,39 +683,44 @@ def addFloatNumbers(param):
 	### Создание GVL по каналам в драйвере Slave 104	
 def iec104_GVL(gvl_name, channels):
 	""""
-	Удаляем предыдущий GVL, если был. Добавляем новый. Наполняем переменными из каналов
-	"""
-	# Удаляем старое	
-	clearOld_GVL(gvl_name)	
-	
+	Добавляем новый gvl. Наполняем переменными из каналов
+	"""	
+		
 	# Добавляем пустой новый
 	app = getActiveApplication()
 	if not app is None :
-		new_gvl_obj = app.create_gvl(gvl_name)
+		obj = app.find('GVL_I104')
+		if len(obj) == 0 :
+			app.create_folder('GVL_I104')
+		obj = app.find('GVL_I104')	
+
+		new_gvl_obj = obj[0].create_gvl(gvl_name)
 		new_gvl_obj.textual_declaration.remove(0, 0, new_gvl_obj.textual_declaration.length)
 		new_gvl_obj.textual_declaration.insert(0, 0, getGVLdata(channels))
 		write_msg(Severity.Text, 'Добавлено:   {gvl}'.format(gvl = gvl_name))
 	else:
 		write_msg(Severity.Error, 'Application не найдено')
 		return	
-	
+
 def clearOld_GVL(gvl_name):
 	"""
-	Удаляем GVL, которые назывались по старому, если они еще есть в проекте
+	Удаляем все старые GVL
 	"""
-	gvl_list = {
-		'I104_GVL_TM' : 'I104_GVL_1',
-		'I104_GVL_KK' : 'I104_GVL_2'
-	}
-	obj = getActiveDevice().find(gvl_list.get(gvl_name), True)
-	if len(obj) > 0 :
-		obj[0].remove()
-		write_msg(Severity.Text, 'Удалено:   {gvl}'.format(gvl = gvl_list.get(gvl_name)))
-	obj = getActiveDevice().find(gvl_name, True)
-	if len(obj) > 0 :
-		obj[0].remove()
-		write_msg(Severity.Text, 'Удалено:   {gvl}'.format(gvl = gvl_name))	
-
+	
+	write_msg(Severity.Text, 'Удаляем все старые GVL:')
+	
+	gvl_list = [gvl_name] 
+	for i in range(2,150):
+		gvl_list.append(gvl_list[0] + '_' + str(i))
+		
+	app = getActiveApplication()
+	if not app is None :
+		for g in gvl_list:
+			obj = app.find(g, True)			
+			if len(obj) > 0 :
+				obj[0].remove()
+				write_msg(Severity.Text, 'Удалено:   {gvl}'.format(gvl = g))
+		
 def getGVLdata(channels):
 	"""
 	Из каналов получаем внутренний текст GVL
@@ -597,6 +788,68 @@ def getLineImitObj(line):
 	"""
 	return line[line.find('[')+1:line.find(']')]
 
+def commentTriggers():
+	"""
+	Составляя очередь мы складировали триггеры в GVL файлах, теперь нужно удалить дубликаты из gvl файла triggers, который импортируется вместе с Application
+	"""
+	obj = getActiveDevice().find("triggers", True)
+	if len(obj) == 0 :
+		return
+		
+	#Проходимся по всем добавленным GVL портов и складируем все триггеры в списке port_triggers
+	obj = getActiveDevice().find("ModbusControlGVLs", True)
+	line_text = ""
+	if len(obj) == 0 :
+		return
+	
+	write_msg(Severity.Text, '----------Найдена папка ModbusControlGVLs, проверяем triggers на пересечения----------')
+		
+	port_triggers = []
+	for gvl_file in obj[0].get_children(False):
+		for line_index in range(0,gvl_file.textual_declaration.linecount):
+			line_text = gvl_file.textual_declaration.get_line(line_index)
+			if ("_trigger_" in line_text) and (not "_trigger_EMPTY_" in line_text):
+				port_triggers.append(line_text[line_text.index('_'):line_text.index(':')])
+					
+	#Находим GVL с именем triggers и комментируем те тригера, которые уже есть (из списка port_triggers)		
+	obj = getActiveDevice().find("triggers", True)
+		
+	port_triggers = [x.lower() for x in port_triggers]
+	content = ""
+	replace_count = 0
+	delete_triggers = True
+	for line_index in range(0,obj[0].textual_declaration.linecount):
+		line_text = obj[0].textual_declaration.get_line(line_index)
+		if ("_trigger_" in line_text) and (not "//" in line_text):
+			trig_name = line_text[line_text.index('_'):line_text.index(':')]				
+			if trig_name.lower() in port_triggers:
+				line_text = line_text.replace(trig_name, "//" + trig_name)
+				replace_count = replace_count + 1
+			else:
+				delete_triggers = False
+		content = content + line_text + "\n"
+	
+	if delete_triggers == True:
+		obj[0].remove()
+		write_msg(Severity.Text, '----------Удален объект triggers, как не содержащий уникальных элементов ----------')
+	elif replace_count > 0:
+		obj[0].textual_declaration.replace(content)
+		write_msg(Severity.Text, '----------Закомментили дублирующие триггеры в triggers. Объект не удален, так как есть уникальные элементы----------')
+
+def import_queue(path):
+	"""
+	Импортируем файлы из папки Queue
+	"""
+	obj = getActiveDevice().find("ModbusControlGVLs", True)
+	if len(obj) > 0 :
+		obj[0].remove()
+		write_msg(Severity.Text, 'Удалена папка:   ModbusControlGVLs')
+	if os.path.exists(path + '\modules\Queue'):
+		write_msg(Severity.Text,'Найдена папка modules\Queue. Производим импорт конфигурации очереди Modbus')		
+		for xml in os.listdir(path + '\modules\Queue'):
+			import_xml(path + '\\modules\\Queue\\' + xml)		
+		write_msg(Severity.Text, '----------Импорт файлов очереди закончен----------')		
+
 	### Импорт модбас устройств
 def replaceModbusDevices(path):
 	"""
@@ -609,9 +862,11 @@ def replaceModbusDevices(path):
 			cur_dir = path + '\modules' + '\\' + module_folder
 			module = module_folder.replace('Модуль ', 'A')
 			obj = getActiveDevice().find(module, True)
+			if module_folder == "Queue":
+				continue
 			if len(obj) > 0 :
 				ports = {(child.index + 1) : child for child in obj[0].get_children(False)}
-				for ch in os.listdir(cur_dir):
+				for ch in os.listdir(cur_dir):					
 					cur_dir = path + '\modules' + '\\' + module_folder + '\\' + ch
 					ch_object = ports.get(int(ch.replace('Канал ','')))
 					if ch_object == None:
@@ -626,11 +881,43 @@ def replaceModbusDevices(path):
 			else:
 				write_msg(Severity.Warning, 'Найдена папка ' + module_folder + ', но соответствующий модуль не найден в проекте')
 		write_msg(Severity.Text, '----------Импорт Modbus устройств закончен----------')
+		import_queue(path)				
 		return True
+	elif os.path.exists(path + '\modules_tcp'):
+		write_msg(Severity.Text,'Найдена папка modules_tcp. Перед импортом удаляем все имеющиеся modbus устройства:')
+		clearAllModbusTCPDevices()
+		obj = getActiveDevice().find('Modbus_TCP_Master', True)
+		if obj == None:
+			write_msg(Severity.Warning, 'При попытке добавить modbus устройства не был найден модуль Modbus_TCP_Master.')						
+		cur_dir = path + '\modules_tcp'
+		if 'DEV_ALL.XML' in os.listdir(cur_dir):
+			added_devs_tcp = importModbusTcpDevices(obj[0], cur_dir + '\\DEV_ALL.XML')
+			if len(added_devs_tcp) > 0 :
+				write_msg(Severity.Text, 'Модуль Modbus_TCP_Master. Добавлено: ' + ', '.join(added_devs_tcp))			
+		else:
+			write_msg(Severity.Warning, 'Не найден DEV_ALL.XML. Импорт выполнятся не будет')
+		write_msg(Severity.Text, '----------Импорт ModbusTCP устройств закончен----------')
+		return True		
 	else:
 		write_msg(Severity.Text, 'Этап замены Modbus модулей пропущен, не найдена папка modules')
 		return False
 
+def clearAllModbusTCPDevices():
+	"""
+	Очищает Modbus_TCP_Master модуль в проекте от дочерних устройств.
+	"""
+	deleted_devs = []
+	obj = getActiveDevice().find('Modbus_TCP_Master', True)
+	if (obj != None) > 0 :
+		for modbus_dev in obj[0].get_children(False):
+			deleted_devs.append(modbus_dev.get_name())
+			modbus_dev.remove()
+		if len(deleted_devs)>0:
+			write_msg(Severity.Text,'Модуль Modbus_TCP_Master. Удалено: ' + ', '.join(deleted_devs))	
+		write_msg(Severity.Text, '----------Удаление Modbus устройств завершено----------')
+	else:
+		write_msg(Severity.Warning, 'При попытке очистить modbus устройства не был найден модуль Modbus_TCP_Master.')	
+		
 def clearAllModbusDevices():
 	"""
 	Очищает все Modbus Serial Master в проекте от дочерних устройств.
@@ -655,9 +942,22 @@ def clearModbusDevices(modbus_port):
 	cleared_devs = []
 	for dev in modbus_port.get_children(False):
 		cleared_devs.append(dev.get_name())
-		dev.remove()
+		dev.remove()	
 	return cleared_devs
+
+def importModbusTcpDevices(mod, file):
+	"""
+	Производит импорт в указанный Модуль Modbus_TCP_Master xml файла DEV_ALL.XML. Возвращает список имен добавленных объектов
+	"""
+	added_devs = []
+	if mod == None:
+		return added_devs
 		
+	mod.import_xml(SilentReporter(), file)
+	added_devs = [dev.get_name() for dev in mod.get_children()]
+	#added_devs.reverse()	
+	return added_devs
+	
 def importModbusDevices(port, file):
 	"""
 	Производит импорт в указанный Modbus Serial Master xml файла DEV_ALL.XML. Возвращает список имен добавленных объектов
@@ -708,9 +1008,10 @@ if __name__ == '__main__':
 		if not projects.primary:
 			system.ui.error("Не открыто ни одного проекта")
 		else:
-			folder = system.ui.browse_directory_dialog("Выберите папку modules", path = main_dir)
+			folder = system.ui.browse_directory_dialog("Выберите папку modules (или modules_tcp)", path = main_dir)
 			if folder != None:
-				if replaceModbusDevices(folder.replace('\\modules', '')):
+				if replaceModbusDevices(folder.replace('\\modules_tcp', '').replace('\\modules', '')):
+					commentTriggers()
 					write_msg(Severity.Information, 'Завершено!')
 					write_msg(Severity.Text, 'Время выполнения: {}'.format(datetime.now() - start_time))
 					system.ui.info("Выполнено успешно!")
