@@ -826,15 +826,15 @@ def commentTriggers():
 				line_text = line_text.replace(trig_name, "//" + trig_name)
 				replace_count = replace_count + 1
 			else:
-				delete_triggers = False
+				delete_triggers = False			# Не удаляем тригера, т.к есть тригер в triggers, который не найден в port_triggers
 		content = content + line_text + "\n"
 	
 	if delete_triggers == True:
 		obj[0].remove()
 		write_msg(Severity.Text, '----------Удален объект triggers, как не содержащий уникальных элементов ----------')
-	elif replace_count > 0:
+	else:
 		obj[0].textual_declaration.replace(content)
-		write_msg(Severity.Text, '----------Закомментили дублирующие триггеры в triggers. Объект не удален, так как есть уникальные элементы----------')
+		write_msg(Severity.Text, '----------ПРОВЕРЬТЕ СЕБЯ! ВОЗМОЖНО ОШИБКА! Объект triggers не удален, так как есть уникальные элементы----------')
 
 def import_queue(path):
 	"""
